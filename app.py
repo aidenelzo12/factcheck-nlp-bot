@@ -10,12 +10,14 @@ app = Flask(__name__)
 
 # ১. Google Sheet সেটআপ
 SHEET_URL = "https://docs.google.com/spreadsheets/d/17cdxH2bk2u57PBG7efSzZ0iDCC5V951drD7Bl-lQmrw/edit?usp=sharing"
-scope = ['https://spreadsheets.google.com/feeds',
-         'https://www.googleapis.com/auth/drive']
+scope = [
+    'https://spreadsheets.google.com/feeds',
+    'https://www.googleapis.com/auth/drive'
+]
 creds = ServiceAccountCredentials.from_json_keyfile_name('creds.json', scope)
 client = gspread.authorize(creds)
 sheet = client.open_by_url(SHEET_URL).sheet1
-data = sheet.get_all_records()
+sheet_data = sheet.get_all_records()  # Google Sheet থেকে নেয়া ডেটা
 
 @app.route("/", methods=["GET"])
 def index():
@@ -23,15 +25,25 @@ def index():
 
 @app.route("/check", methods=["POST"])
 def check():
-    query = request.json.get("query", "")
+    # ১. JSON সেফলি পার্স করা
+    payload = request.get_json(silent=True)
+    if not payload:
+        return jsonify({"error": "Invalid or missing JSON body"}), 400
+
+    query = payload.get("query", "").strip()
+    if not query:
+        return jsonify({"error": "অনুগ্রহ করে 'query' ফিল্ড পূরণ করুন"}), 400
+
+    # ২. RapidFuzz দিয়ে ফাজি ম্যাচিং
     best_match = None
     best_score = 0
-    for row in data:
+    for row in sheet_data:
         score = fuzz.token_set_ratio(query, row['Claim'])
         if score > best_score:
             best_score, best_match = score, row
 
-    if best_score > 50:
+    # ৩. রেসপন্স
+    if best_match and best_score > 50:
         return jsonify({
             "match_score": best_score,
             "claim": best_match['Claim'],
@@ -43,7 +55,7 @@ def check():
         return jsonify({
             "message": "দুঃখিত, ম্যাচ মেলেনি",
             "match_score": best_score
-        })
+        }), 200
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
